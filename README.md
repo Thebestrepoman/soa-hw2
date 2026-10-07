@@ -42,6 +42,107 @@ set +a
 ./mvnw spring-boot:run
 ```
 
+## Структура проекта и кода
+
+Основной код находится в пакете `ru.marketplace`. Контроллеры принимают HTTP-запросы, сервисы выполняют бизнес-операции и SQL через `JdbcTemplate`. Отдельных JPA-сущностей и слоя Repository в этой реализации нет: результаты SQL преобразуются в сгенерированные модели в методах сервисов. Регистрация, вход и ротация refresh реализованы непосредственно в `AuthController`, а работа с JWT вынесена в `Tokens`.
+
+```text
+.
+├── pom.xml                         # Зависимости, Java 21, генератор OpenAPI и сборка JAR
+├── mvnw / mvnw.cmd                 # Maven Wrapper для Linux/macOS и Windows
+├── .mvn/wrapper/
+│   └── maven-wrapper.properties    # Версия Maven и адрес скачивания
+├── Dockerfile                      # Сборка JAR и образ для запуска приложения
+├── compose.yaml                    # Приложение, PostgreSQL, volume и healthcheck
+├── .env.example                    # Пример переменных окружения
+├── .gitignore                      # Исключает target/, .env и локальные файлы
+├── .dockerignore                   # Исключает лишние файлы из контекста Docker-сборки
+├── .gitattributes                  # Правила перевода строк, включая Windows wrapper
+├── .github/workflows/ci.yaml        # Сборка и тесты при push / pull request
+├── README.md                       # Запуск, устройство проекта и сценарий защиты
+├── scripts/
+│   └── demo.py                     # E2E по HTTP с проверками и SELECT через psql
+└── src/
+    ├── main/
+    │   ├── java/ru/marketplace/
+    │   │   ├── MarketplaceApplication.java # Точка входа Spring Boot
+    │   │   ├── ProductsController.java    # HTTP-операции над товарами
+    │   │   ├── OrdersController.java      # HTTP-операции над заказами
+    │   │   ├── PromosController.java      # HTTP-создание промокодов
+    │   │   ├── AuthController.java        # Регистрация, вход, refresh, начальный ADMIN
+    │   │   ├── ContractController.java    # Выдача контракта по GET /openapi.yaml
+    │   │   ├── CatalogService.java        # CRUD товаров, фильтры, права продавца
+    │   │   ├── OrderService.java          # Транзакции заказов, остатки, состояния
+    │   │   ├── PromoService.java          # Проверки промокодов, скидки и счётчики
+    │   │   ├── Security.java              # Spring Security, проверка access JWT
+    │   │   ├── Tokens.java                # Выпуск и проверка JWT
+    │   │   ├── Actor.java                 # ID и роль текущего пользователя
+    │   │   ├── ContractRules.java         # Дополнительная валидация тела запроса
+    │   │   ├── BusinessException.java     # Исключение с HTTP-статусом, кодом и details
+    │   │   ├── Errors.java                # Преобразование исключений в ApiError
+    │   │   └── RequestLogging.java        # X-Request-Id, JSON-лог, маскирование секретов
+    │   └── resources/
+    │       ├── application.yaml           # Подключение к БД, JWT, лимиты, Jackson
+    │       ├── logback-spring.xml         # Формат и вывод логов
+    │       ├── openapi/
+    │       │   └── marketplace.yaml       # Контракт: пути, DTO, ограничения, ошибки
+    │       └── db/migration/
+    │           └── V1__marketplace.sql    # Миграция Flyway: таблицы, индексы, триггеры
+    └── test/java/ru/marketplace/
+        └── MarketplaceTest.java           # HTTP-интеграционные тесты с PostgreSQL
+```
+
+### Где искать конкретную логику
+
+| Задача | Файл и методы |
+|---|---|
+| Изменить API, обязательные поля или ограничения | [`marketplace.yaml`](src/main/resources/openapi/marketplace.yaml); после изменения выполнить `./mvnw generate-sources` |
+| Создать, прочитать, обновить или архивировать товар | [`CatalogService.java`](src/main/java/ru/marketplace/CatalogService.java): `create`, `get`, `update`, `archive`; фильтры и пагинация — `list`, проверка продавца — `owned` |
+| Создать или изменить заказ | [`OrderService.java`](src/main/java/ru/marketplace/OrderService.java): `create`, `update`; на этих методах находятся границы транзакций `@Transactional` |
+| Проверить лимит операций и владельца заказа | `OrderService`: `rate`, `operation`, `own`, `ownedLocked` |
+| Разобрать резервирование и возврат остатков | `OrderService`: `lockUser`, `lockProducts`, `reserve`, `restore`; запись позиций и чтение заказа — `saveItems`, `load` |
+| Отменить заказ или перевести его в следующее состояние | `OrderService`: `cancel`, `transition` |
+| Проверить промокод и рассчитать скидку | [`PromoService.java`](src/main/java/ru/marketplace/PromoService.java): `byCode`, `byId`, `validate`, `discount`, `usage`; создание — `create` |
+| Разобрать регистрацию, пароли и ротацию refresh | [`AuthController.java`](src/main/java/ru/marketplace/AuthController.java): `register`, `login`, `refresh`; начальное создание ADMIN — `run` |
+| Разобрать JWT и доступ к защищённым путям | [`Security.java`](src/main/java/ru/marketplace/Security.java) настраивает цепочку фильтров и BCrypt; [`Tokens.java`](src/main/java/ru/marketplace/Tokens.java) выпускает и проверяет JWT; [`Actor.java`](src/main/java/ru/marketplace/Actor.java) предоставляет текущего пользователя и проверку роли |
+| Найти проверки, дополняющие сгенерированные аннотации | [`ContractRules.java`](src/main/java/ru/marketplace/ContractRules.java): `afterBodyRead`, `money`, `password`, `items` |
+| Изменить обработку ошибок | [`BusinessException.java`](src/main/java/ru/marketplace/BusinessException.java) хранит данные бизнес-ошибки; [`Errors.java`](src/main/java/ru/marketplace/Errors.java) формирует HTTP-ответы, включая ошибки валидации и JSON |
+| Разобрать журналирование запросов | [`RequestLogging.java`](src/main/java/ru/marketplace/RequestLogging.java): `doFilterInternal` собирает событие, `mask` скрывает чувствительные поля; формат вывода задаёт [`logback-spring.xml`](src/main/resources/logback-spring.xml) |
+| Посмотреть устройство БД | [`V1__marketplace.sql`](src/main/resources/db/migration/V1__marketplace.sql): таблицы `users`, `products`, `orders`, `order_items`, `promo_codes`, `user_operations`, `refresh_tokens`, ограничения, индексы и триггеры |
+| Найти примеры запросов и ожидаемое поведение | [`MarketplaceTest.java`](src/test/java/ru/marketplace/MarketplaceTest.java) — автоматические проверки; [`demo.py`](scripts/demo.py) — сценарий демонстрации работающего сервиса |
+
+### Где находятся сгенерированные файлы
+
+После генерации появляются два Java-пакета:
+
+```text
+target/generated-sources/openapi/src/main/java/ru/marketplace/
+├── api/
+│   ├── AuthApi.java
+│   ├── ProductsApi.java
+│   ├── OrdersApi.java
+│   └── PromosApi.java
+└── model/
+    └── DTO и enum из контракта: ProductCreate, ProductUpdate, ProductResponse,
+        OrderCreate, OrderUpdate, OrderResponse, ApiError, TokenResponse и другие
+```
+
+Интерфейсы `*Api` содержат объявления HTTP-методов и аннотации маршрутов. Классы из `model` описывают JSON запросов и ответов и содержат аннотации валидации. Например, `ProductsController implements ProductsApi`, а его методы принимают `ProductCreate` / `ProductUpdate` и возвращают `ProductResponse`. Сгенерированные файлы вручную не редактируют: изменения вносят в OpenAPI, затем запускают генерацию. Они не хранятся в Git и удаляются командой `clean`.
+
+Остальные результаты сборки тоже находятся в `target/`: `classes/` — скомпилированные классы и ресурсы, `surefire-reports/` — отчёты тестов, `marketplace-1.0.0.jar` — запускаемый JAR.
+
+### Как проходит запрос на создание заказа
+
+1. `RequestLogging` создаёт UUID запроса, устанавливает `X-Request-Id` и начинает измерять время.
+2. Фильтр из `Security` проверяет access JWT через `Tokens.parse` и сохраняет `Actor` в `SecurityContext`.
+3. Spring MVC выбирает метод по сгенерированному `OrdersApi`, преобразует JSON в `OrderCreate` и выполняет валидацию. `ContractRules` дополняет её проверками позиций.
+4. `OrdersController.createOrder` вызывает `OrderService.create`. Spring открывает транзакцию благодаря `@Transactional`.
+5. `OrderService` проверяет роль, лимит и активные заказы, блокирует товары, проверяет каталог и остатки, резервирует количество и фиксирует цены. При наличии промокода вызывает `PromoService`, затем сохраняет заказ, позиции и операцию через `JdbcTemplate`.
+6. При успехе транзакция фиксируется, контроллер возвращает `201` и `OrderResponse`. Бизнес-исключение приводит к откату, а `Errors` формирует ответ `ApiError`. Ошибки авторизации обрабатываются прямо в цепочке безопасности.
+7. `RequestLogging` завершает обработку и записывает JSON-событие с результатом, длительностью и замаскированным телом запроса, в том числе при ошибке.
+
+Для знакомства с проектом удобно читать файлы в этом же порядке: контракт → контроллер → сервис → миграция → тесты.
+
 ## API
 
 Все бизнес-эндпоинты требуют `Authorization: Bearer <access_token>`. `/auth/*` и скачивание контракта публичны. Полный контракт, ограничения и ответы: [`src/main/resources/openapi/marketplace.yaml`](src/main/resources/openapi/marketplace.yaml).
