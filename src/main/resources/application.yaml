@@ -1,0 +1,27 @@
+spring:
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/marketplace}
+    username: ${DATABASE_USER:marketplace}
+    password: ${DATABASE_PASSWORD:marketplace}
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+      accept-float-as-int: false
+    mapper:
+      allow-coercion-of-scalars: false
+  mvc:
+    problemdetails:
+      enabled: false
+marketplace:
+  jwt-secret: ${JWT_SECRET}
+  access-ttl: ${ACCESS_TTL:PT20M}
+  refresh-ttl: ${REFRESH_TTL:P14D}
+  order-interval: ${ORDER_INTERVAL:PT1M}
+  admin-email: ${ADMIN_EMAIL:}
+  admin-password: ${ADMIN_PASSWORD:}
+server:
+  error:
+    include-message: never
+logging:
+  level:
+    ru.marketplace: INFO

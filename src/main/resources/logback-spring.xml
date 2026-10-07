@@ -1,0 +1,13 @@
+<configuration>
+  <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+  <appender name="APP" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder class="org.springframework.boot.logging.logback.StructuredLogEncoder">
+      <format>logstash</format>
+    </encoder>
+  </appender>
+  <appender name="REQUEST" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder><pattern>%msg%n</pattern></encoder>
+  </appender>
+  <logger name="API_REQUESTS" level="INFO" additivity="false"><appender-ref ref="REQUEST"/></logger>
+  <root level="INFO"><appender-ref ref="APP"/></root>
+</configuration>
